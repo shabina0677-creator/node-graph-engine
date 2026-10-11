@@ -84,3 +84,28 @@ def test_unsafe_node_id_is_rejected():
          "edges": []}
     with pytest.raises(GraphError):
         simulate(g)
+
+
+import subprocess
+from engine import SimulatorError
+
+
+def _simple_graph():
+    return {"nodes": [number("n1", 2), number("n2", 3), node("add1", "add"), node("d1", "display")],
+            "edges": [wire("n1", "add1", "a"), wire("n2", "add1", "b"), wire("add1", "d1", "x")]}
+
+
+def test_ngspice_hang_is_reported_not_crashed(monkeypatch):
+    def hang(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="ngspice", timeout=5)
+    monkeypatch.setattr("engine.subprocess.run", hang)
+    with pytest.raises(SimulatorError):
+        simulate(_simple_graph())
+
+
+def test_ngspice_crash_is_reported_not_crashed(monkeypatch):
+    def crash(*args, **kwargs):
+        return subprocess.CompletedProcess(args, 139, stdout="", stderr="Segmentation fault")
+    monkeypatch.setattr("engine.subprocess.run", crash)
+    with pytest.raises(SimulatorError):
+        simulate(_simple_graph())

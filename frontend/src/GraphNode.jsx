@@ -2,25 +2,27 @@ import { createContext, useContext } from "react";
 import { Handle, Position, useReactFlow } from "@xyflow/react";
 
 export const DefsContext = createContext({});
-export const ResultsContext = createContext({});
+export const ResultsContext = createContext({ results: {}, stale: false });
 
 function formatValue(v) {
   if (v === null || v === undefined) return "-";
   return String(Number.parseFloat(Number(v).toPrecision(10)));
 }
 
-// One component renders every node type. It is driven entirely by the
-// definition the API sends, so nothing here knows what "Add" means.
+// One component renders every node type, driven by the definition the API sends.
 export default function GraphNode({ id, type, data }) {
   const defs = useContext(DefsContext);
-  const results = useContext(ResultsContext);
+  const { results, stale } = useContext(ResultsContext);
   const { updateNodeData } = useReactFlow();
 
   const def = defs[type];
   if (!def) return <div className="gn gn-error">Unknown node type: {type}</div>;
 
-  const result = results[id];
-  const status = result?.status ?? "idle";
+  // Results belong to one version of the graph. If the graph moved on,
+  // we show nothing from the old version.
+  const result = stale ? undefined : results[id];
+  const status = stale ? "pending" : (result?.status ?? "idle");
+  const showsValue = def.fields.length === 0;
 
   return (
     <div className={`gn gn-${status}`}>
@@ -45,7 +47,8 @@ export default function GraphNode({ id, type, data }) {
         </div>
       ))}
 
-      {status === "ok" && def.fields.length === 0 && (
+      {status === "pending" && showsValue && <div className="gn-row gn-result">…</div>}
+      {status === "ok" && showsValue && (
         <div className="gn-row gn-result">{formatValue(result.value)}</div>
       )}
       {status === "error" && <div className="gn-row gn-result">{result.message}</div>}

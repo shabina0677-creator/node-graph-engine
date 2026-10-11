@@ -60,3 +60,12 @@ body { background: var(--bg); color: var(--text); }
 .gn-ok .gn-result { color: var(--ok); }
 .gn-error .gn-result { color: var(--error); }
 .gn-blocked .gn-result { color: var(--blocked); }
+
+.gn-pending { opacity: 0.65; }
+.gn-pending .gn-result { color: var(--muted); }
+
+.sync { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.sync::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.sync-synced { color: var(--ok); }
+.sync-pending, .sync-running { color: var(--blocked); }
+.sync-offline, .sync-rejected { color: var(--error); }

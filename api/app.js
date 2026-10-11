@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 const { router: graphs, wrap, reject } = require("./graphs");
 const { validateGraph } = require("./validate");
 const {
-  simulate, nodeTypes, SimulatorUnavailable, GraphRejected, SIMULATOR_URL,
+  simulate, nodeTypes, SimulatorUnavailable, GraphRejected, RequestCancelled, SIMULATOR_URL,
 } = require("./simulatorClient");
 
 const app = express();
@@ -33,9 +33,17 @@ app.get("/api/node-types", wrap(async (req, res) => {
 app.post("/api/simulate", wrap(async (req, res) => {
   const v = validateGraph(req.body);
   if (!v.ok) return reject(res, 400, "invalid_graph", v.message);
+
+  // If the browser gives up on this request, stop the call to Python too.
+  const controller = new AbortController();
+  res.on("close", () => {
+    if (!res.writableFinished) controller.abort();
+  });
+
   try {
-    res.json({ results: await simulate(v.graph) });
+    res.json({ results: await simulate(v.graph, controller.signal) });
   } catch (e) {
+    if (e instanceof RequestCancelled) return;
     if (e instanceof GraphRejected) return reject(res, 422, "graph_rejected", e.message);
     if (e instanceof SimulatorUnavailable) return reject(res, 503, "simulator_unavailable", e.message);
     throw e;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow, ReactFlowProvider, Background, Controls,
   addEdge, useNodesState, useEdgesState, useReactFlow,
@@ -7,18 +7,25 @@ import "@xyflow/react/dist/style.css";
 import "./App.css";
 import GraphNode, { DefsContext, ResultsContext } from "./GraphNode";
 import * as api from "./api";
+import { SYNC } from "./config";
 
 function Editor() {
   const { screenToFlowPosition } = useReactFlow();
   const [defs, setDefs] = useState([]);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
-  const [results, setResults] = useState({});
   const [graphId, setGraphId] = useState(null);
   const [name, setName] = useState("My graph");
   const [saved, setSaved] = useState([]);
   const [message, setMessage] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  // Live sync state
+  const [view, setView] = useState({ sig: null, results: {} });
+  const [sync, setSync] = useState({ state: "idle", message: null });
+  const versionRef = useRef(0);
+  const controllerRef = useRef(null);
+  const retryRef = useRef(null);
 
   const refreshSaved = useCallback(
     () => api.listGraphs().then(setSaved).catch(() => {}),
@@ -33,8 +40,74 @@ function Editor() {
   const defsByType = useMemo(() => Object.fromEntries(defs.map((d) => [d.type, d])), [defs]);
   const nodeTypes = useMemo(() => Object.fromEntries(defs.map((d) => [d.type, GraphNode])), [defs]);
 
+  // The signature IS the graph the backend sees: no positions, so dragging a
+  // node never triggers a run. Same string means same graph.
+  const sig = useMemo(
+    () =>
+      JSON.stringify({
+        nodes: nodes.map((n) => ({ id: n.id, type: n.type, data: n.data })),
+        edges: edges.map((e) => ({
+          source: e.source,
+          target: e.target,
+          sourceHandle: e.sourceHandle ?? null,
+          targetHandle: e.targetHandle,
+        })),
+      }),
+    [nodes, edges]
+  );
+
+  const runSync = useCallback(async (graphSig, version, attempt) => {
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setSync({ state: "running", message: null });
+    try {
+      const results = await api.simulate(JSON.parse(graphSig), controller.signal);
+      if (version !== versionRef.current) return; // the graph moved on: drop it
+      setView({ sig: graphSig, results });
+      setSync({ state: "synced", message: null });
+    } catch (e) {
+      if (e.name === "AbortError" || version !== versionRef.current) return;
+      if (e.kind === "rejected") {
+        setView({ sig: graphSig, results: {} });
+        setSync({ state: "rejected", message: e.message });
+        return;
+      }
+      // Network, timeout or simulator trouble: say so, retry with backoff.
+      const delays = SYNC.retryDelaysMs;
+      const delay = delays[Math.min(attempt, delays.length - 1)];
+      setSync({ state: "offline", message: e.message });
+      retryRef.current = setTimeout(() => runSync(graphSig, version, attempt + 1), delay);
+    }
+  }, []);
+
+  useEffect(() => {
+    const version = ++versionRef.current; // this graph is now the newest
+    clearTimeout(retryRef.current);
+    controllerRef.current?.abort(); // anything still in flight is obsolete
+
+    if (JSON.parse(sig).nodes.length === 0) {
+      setView({ sig, results: {} });
+      setSync({ state: "idle", message: null });
+      return;
+    }
+    setSync({ state: "pending", message: null });
+    const timer = setTimeout(() => runSync(sig, version, 0), SYNC.debounceMs);
+    return () => clearTimeout(timer);
+  }, [sig, runSync]);
+
+  useEffect(
+    () => () => {
+      clearTimeout(retryRef.current);
+      controllerRef.current?.abort();
+    },
+    []
+  );
+
+  const stale = view.sig !== sig;
+  const resultsValue = useMemo(() => ({ results: view.results, stale }), [view.results, stale]);
+
   // Convenience rules so the user can't make a pointless wire. The backend
-  // enforces the same things on its own and is the real authority.
+  // reports the same problems on its own and is the real authority.
   const isValidConnection = useCallback(
     (c) =>
       c.source !== c.target &&
@@ -63,7 +136,7 @@ function Editor() {
     [defsByType, screenToFlowPosition, setNodes]
   );
 
-  const toPayload = () => ({
+  const toSavePayload = () => ({
     nodes: nodes.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
     edges: edges.map((e) => ({
       id: e.id,
@@ -74,23 +147,10 @@ function Editor() {
     })),
   });
 
-  const run = async () => {
-    setBusy(true);
-    try {
-      setResults(await api.simulate(toPayload()));
-      setMessage(null);
-    } catch (e) {
-      setResults({});
-      setMessage({ kind: "error", text: e.message });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const save = async () => {
     setBusy(true);
     try {
-      const g = await api.saveGraph(graphId, { name, ...toPayload() });
+      const g = await api.saveGraph(graphId, { name, ...toSavePayload() });
       setGraphId(g.id);
       setMessage({ kind: "ok", text: "Saved" });
       refreshSaved();
@@ -109,7 +169,6 @@ function Editor() {
       setEdges(g.edges);
       setGraphId(g.id);
       setName(g.name);
-      setResults({});
       setMessage(null);
     } catch (e) {
       setMessage({ kind: "error", text: e.message });
@@ -119,11 +178,19 @@ function Editor() {
   const reset = () => {
     setNodes([]);
     setEdges([]);
-    setResults({});
     setGraphId(null);
     setName("My graph");
     setMessage(null);
   };
+
+  const syncText = {
+    idle: "Add nodes to start",
+    pending: "Updating…",
+    running: "Updating…",
+    synced: "Up to date",
+    offline: `${sync.message}. Retrying…`,
+    rejected: sync.message,
+  }[sync.state];
 
   return (
     <div className="app">
@@ -142,8 +209,10 @@ function Editor() {
           ))}
         </select>
         <button onClick={reset}>New</button>
-        <button className="primary" onClick={run} disabled={busy}>Run</button>
         {message && <span className={`msg msg-${message.kind}`}>{message.text}</span>}
+        <span className={`sync sync-${sync.state}`} role="status" aria-live="polite">
+          {syncText}
+        </span>
       </header>
 
       <aside className="palette">
@@ -166,7 +235,7 @@ function Editor() {
 
       <main className="canvas">
         <DefsContext.Provider value={defsByType}>
-          <ResultsContext.Provider value={results}>
+          <ResultsContext.Provider value={resultsValue}>
             <ReactFlow
               nodes={nodes}
               edges={edges}
