@@ -26,3 +26,10 @@ def ngspice_check():
         return {"returncode": r.returncode, "stdout": r.stdout, "stderr": r.stderr}
     finally:
         os.remove(path)
+
+from engine import simulate
+
+
+@app.post("/simulate")
+def simulate_endpoint(graph: dict):
+    return {"results": simulate(graph)}
