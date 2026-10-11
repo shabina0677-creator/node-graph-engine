@@ -1,19 +1,20 @@
-const express = require("express");
-const cors = require("cors");
+const mongoose = require("mongoose");
+const app = require("./app");
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const MONGO_URL = process.env.MONGO_URL || "mongodb://mongo:27017/graphs";
 
-const SIMULATOR_URL = process.env.SIMULATOR_URL || "http://simulator:8000";
-
-app.get("/api/health", async (req, res) => {
-  try {
-    const r = await fetch(`${SIMULATOR_URL}/health`);
-    res.json({ api: "ok", simulator: (await r.json()).status });
-  } catch {
-    res.status(503).json({ api: "ok", simulator: "down" });
+async function connectWithRetry() {
+  for (;;) {
+    try {
+      await mongoose.connect(MONGO_URL, { serverSelectionTimeoutMS: 3000 });
+      console.log("MongoDB connected");
+      return;
+    } catch (e) {
+      console.log("MongoDB not ready, retrying in 2s");
+      await new Promise((r) => setTimeout(r, 2000));
+    }
   }
-});
+}
 
 app.listen(4000, () => console.log("API on 4000"));
+connectWithRetry();
