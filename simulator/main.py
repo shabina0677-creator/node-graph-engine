@@ -1,5 +1,10 @@
-import subprocess, tempfile, os
-from fastapi import FastAPI
+import os
+import subprocess
+import tempfile
+
+from fastapi import FastAPI, HTTPException
+
+from engine import GraphError, SimulatorError, simulate
 
 app = FastAPI()
 
@@ -11,9 +16,11 @@ B1 n3 0 V = V(n1) + V(n2)
 .end
 """
 
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 
 @app.get("/ngspice-check")
 def ngspice_check():
@@ -27,9 +34,12 @@ def ngspice_check():
     finally:
         os.remove(path)
 
-from engine import simulate
-
 
 @app.post("/simulate")
 def simulate_endpoint(graph: dict):
-    return {"results": simulate(graph)}
+    try:
+        return {"results": simulate(graph)}
+    except GraphError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except SimulatorError as e:
+        raise HTTPException(status_code=503, detail=str(e))
