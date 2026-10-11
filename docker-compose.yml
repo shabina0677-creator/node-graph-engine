@@ -1,0 +1,25 @@
+services:
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+
+  simulator:
+    build: ./simulator
+    ports: ["8000:8000"]
+
+  api:
+    build: ./api
+    ports: ["4000:4000"]
+    environment:
+      SIMULATOR_URL: http://simulator:8000
+      MONGO_URL: mongodb://mongo:27017/graphs
+    depends_on: [simulator, mongo]
+
+  frontend:
+    build: ./frontend
+    ports: ["5173:5173"]
+    depends_on: [api]
+
+volumes:
+  mongo-data:
