@@ -3,7 +3,9 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const { router: graphs, wrap, reject } = require("./graphs");
 const { validateGraph } = require("./validate");
-const { simulate, SimulatorUnavailable, GraphRejected, SIMULATOR_URL } = require("./simulatorClient");
+const {
+  simulate, nodeTypes, SimulatorUnavailable, GraphRejected, SIMULATOR_URL,
+} = require("./simulatorClient");
 
 const app = express();
 app.use(cors());
@@ -17,6 +19,15 @@ app.get("/api/health", wrap(async (req, res) => {
   } catch {}
   const database = mongoose.connection.readyState === 1 ? "ok" : "down";
   res.status(simulator === "ok" && database === "ok" ? 200 : 503).json({ api: "ok", simulator, database });
+}));
+
+app.get("/api/node-types", wrap(async (req, res) => {
+  try {
+    res.json({ nodeTypes: await nodeTypes() });
+  } catch (e) {
+    if (e instanceof SimulatorUnavailable) return reject(res, 503, "simulator_unavailable", e.message);
+    throw e;
+  }
 }));
 
 app.post("/api/simulate", wrap(async (req, res) => {

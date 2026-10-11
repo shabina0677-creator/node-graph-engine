@@ -5,6 +5,7 @@ import tempfile
 from fastapi import FastAPI, HTTPException
 
 from engine import GraphError, SimulatorError, simulate
+from nodes import public_node_types
 
 app = FastAPI()
 
@@ -20,6 +21,11 @@ B1 n3 0 V = V(n1) + V(n2)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/node-types")
+def node_types():
+    return {"nodeTypes": public_node_types()}
 
 
 @app.get("/ngspice-check")
